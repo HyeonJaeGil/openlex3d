@@ -1,4 +1,4 @@
-#[NeurIPS 2025] OpenLex3D Toolbox
+# [NeurIPS 2025] OpenLex3D Toolbox
 [**Project Page**](https://openlex3d.github.io/) |
 [**ArXiv**](https://arxiv.org/abs/2503.19764)
 
