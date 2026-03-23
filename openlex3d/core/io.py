@@ -9,7 +9,7 @@ import json
 from omegaconf import DictConfig
 from sklearn.neighbors import NearestNeighbors
 
-from openlex3d.core.categories import get_color
+from openlex3d.core.categories import NONE, get_color
 
 PROMPT_LIST_FILE = "prompt_list.txt"
 
@@ -109,21 +109,28 @@ def save_results(
     # Prepare outputh path
     output_cloud = Path(output_path, "point_cloud.pcd")
 
+    keep_mask = None
     if pred_categories:
+        pred_categories = np.asarray(pred_categories)
+        keep_mask = pred_categories != NONE
+
         # Map categories to colors
         colors = np.array(
-            [get_color(category) for category in pred_categories], dtype=float
+            [get_color(category) for category in pred_categories[keep_mask]], dtype=float
         )
 
-        # Reconstruct output cloud
-        cloud = reference_cloud.clone()
-        cloud.point.colors = o3d.core.Tensor(colors)
+        # Reconstruct output cloud, omitting 'none' points from visualization output.
+        ref_points = reference_cloud.point.positions.numpy()
+        ref_points = ref_points[keep_mask]
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(ref_points.astype(np.float64))
+        cloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
 
-        assert cloud.point.positions.shape[0] > 0
-        assert cloud.point.colors.shape[0] > 0
+        assert len(cloud.points) > 0
+        assert len(cloud.colors) > 0
 
         # Save
-        o3d.io.write_point_cloud(str(output_cloud), cloud.to_legacy())
+        o3d.io.write_point_cloud(str(output_cloud), cloud)
 
     # Prepare results yaml file
     output_results = Path(output_path, "results.yaml")
@@ -134,11 +141,15 @@ def save_results(
     # Save predicted labels for each point
     if point_labels is not None:
         output_labels = Path(output_path, "point_labels.npy")
+        if keep_mask is not None:
+            point_labels = np.asarray(point_labels)[keep_mask]
         np.save(output_labels, point_labels)
 
     # Save predicted category for each label of each point
     if point_categories is not None:
         output_categories = Path(output_path, "point_categories.npy")
+        if keep_mask is not None:
+            point_categories = np.asarray(point_categories)[keep_mask]
         np.save(output_categories, point_categories)
 
 
