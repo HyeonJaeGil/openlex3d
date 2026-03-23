@@ -3,8 +3,56 @@ from typing import List
 import numpy as np
 import torch
 import tqdm
+import os
+import json
+import hashlib
+import logging
+from time import perf_counter
+from pathlib import Path
 
 from openlex3d.models.base import VisualLanguageEncoder
+
+logger = logging.getLogger(__name__)
+
+
+def _text_feat_cache_dir() -> Path:
+    cache_root = os.environ.get("OPENLEX3D_TEXT_FEAT_CACHE_DIR", "").strip()
+    if cache_root:
+        root = Path(cache_root)
+    else:
+        # Default to OpenLex3D data tree as requested.
+        root = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "openlex_gt"
+            / "gt_openlex3d"
+            / "text_feature_cache"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _prompt_hash(prompt_list: List[str]) -> str:
+    payload = "\n".join([str(x).strip() for x in prompt_list]).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()
+
+
+def _model_signature(model: VisualLanguageEncoder) -> dict:
+    return {
+        "class": model.__class__.__name__,
+        "backbone": str(getattr(model, "_backbone", "")),
+        "checkpoint": str(getattr(model, "_checkpoint", "")),
+        "feature_dim": int(getattr(model, "FEATURE_DIM", -1)),
+    }
+
+
+def _cache_paths(model: VisualLanguageEncoder, prompt_list: List[str]):
+    sig = _model_signature(model)
+    sig_hash = hashlib.sha1(json.dumps(sig, sort_keys=True).encode("utf-8")).hexdigest()
+    p_hash = _prompt_hash(prompt_list)
+    stem = f"{sig_hash}_{p_hash}_{len(prompt_list)}"
+    root = _text_feat_cache_dir()
+    return root / f"{stem}.npy", root / f"{stem}.json", sig
 
 
 def compute_feature_to_prompt_similarity(
@@ -25,17 +73,62 @@ def compute_feature_to_prompt_similarity(
 
     assert isinstance(model, VisualLanguageEncoder)
 
-    text_feats = model.compute_text_features(prompt_list)
+    disable_cache = os.environ.get("OPENLEX3D_DISABLE_TEXT_FEAT_CACHE", "0").lower() in ("1", "true", "yes")
+    text_feats = None
+    cache_npy, cache_meta, model_sig = _cache_paths(model, prompt_list)
+    if not disable_cache and cache_npy.exists():
+        try:
+            cached = np.load(cache_npy)
+            if (
+                cached.ndim == 2
+                and cached.shape[0] == len(prompt_list)
+                and (model_sig["feature_dim"] <= 0 or cached.shape[1] == model_sig["feature_dim"])
+            ):
+                text_feats = cached
+                logger.info(f"Loaded cached prompt text features: {cache_npy}")
+        except Exception as exc:
+            logger.warning(f"Failed to read cached prompt text features: {exc}")
+
+    text_feat_start = perf_counter()
+    if text_feats is None:
+        text_feats = model.compute_text_features(prompt_list)
+        if not disable_cache:
+            try:
+                np.save(cache_npy, text_feats.astype(np.float32))
+                with open(cache_meta, "w") as f:
+                    json.dump(
+                        {
+                            "model": model_sig,
+                            "prompt_count": len(prompt_list),
+                            "prompt_hash": _prompt_hash(prompt_list),
+                            "feature_shape": list(text_feats.shape),
+                        },
+                        f,
+                        indent=2,
+                    )
+                logger.info(f"Saved cached prompt text features: {cache_npy}")
+            except Exception as exc:
+                logger.warning(f"Failed to save cached prompt text features: {exc}")
+    logger.info(
+        f"Prepared prompt text features in {perf_counter() - text_feat_start:.3f}s "
+        f"(prompts={len(prompt_list)}, dim={text_feats.shape[1] if text_feats.ndim == 2 else 'unknown'})"
+    )
+
     text_features_tensor = torch.from_numpy(text_feats).unsqueeze(0)
     num_feats = features.shape[0]
     similarity = np.zeros((num_feats, text_feats.shape[0]))
 
+    similarity_start = perf_counter()
     for i in tqdm.tqdm(range(0, num_feats, batch_size), total=num_feats // batch_size, desc="Computing feat-prompt similarities"):
         batch = torch.from_numpy(features[i : i + batch_size]).unsqueeze(1)
         batch_similarity = torch.nn.functional.cosine_similarity(
             batch, text_features_tensor, dim=2
         )
         similarity[i : i + batch_size, :] = batch_similarity.cpu().numpy()
+    logger.info(
+        f"Computed similarity matrix in {perf_counter() - similarity_start:.3f}s "
+        f"(features={num_feats}, prompts={text_feats.shape[0]})"
+    )
     return similarity
 
 

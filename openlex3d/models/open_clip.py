@@ -16,8 +16,10 @@ class OpenClip(VisualLanguageEncoder):
     def __init__(
         self, backbone: str = "ViT-H-14", checkpoint: str = None, device: str = "cpu"
     ):
+        self._backbone = backbone
+        self._checkpoint = checkpoint
         self._clip_model, _, preprocess = open_clip.create_model_and_transforms(
-            "ViT-H-14",
+            backbone,
             pretrained=checkpoint,
             device=device,
         )

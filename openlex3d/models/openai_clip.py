@@ -16,6 +16,8 @@ class OpenAIClip(VisualLanguageEncoder):
     def __init__(
         self, backbone: str = "ViT-H-14", checkpoint: str = None, device: str = "cpu"
     ):
+        self._backbone = backbone
+        self._checkpoint = checkpoint
         self._clip_model, _ = clip.load(backbone, device=device, jit=False)
         self._device = device
         self._clip_model.eval()

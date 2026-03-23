@@ -9,6 +9,7 @@ import logging
 import pickle
 import json
 import open3d as o3d
+from loguru import logger as loguru_logger
 
 from openlex3d import get_path
 from openlex3d.core.io import load_all_predictions, load_query_json
@@ -23,6 +24,21 @@ from openlex3d.core.cosine_similarity import compute_normalized_cosine_similarit
 
 
 logger = logging.getLogger(__name__)
+
+
+class _LoguruHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            level = loguru_logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        loguru_logger.opt(exception=record.exc_info).log(level, record.getMessage())
+
+
+def _configure_loguru_logging():
+    root_logger = logging.getLogger()
+    root_logger.handlers = [_LoguruHandler()]
+    root_logger.setLevel(logging.INFO)
 
 
 # ----------------------------
@@ -386,6 +402,7 @@ def get_matches_for_scene(cfg, scene_id):
     config_name="eval_query",
 )
 def main(cfg: DictConfig):
+    _configure_loguru_logging()
     scenes = cfg.dataset.scenes
     all_matches = {}
 

@@ -34,6 +34,14 @@ ID_TO_LABEL = {1: "object"}
 LABEL_TO_ID = {"object": 1}
 
 
+def _gt_id_count_map(gt_ids: np.ndarray):
+    flat_ids = np.asarray(gt_ids).reshape(-1)
+    if flat_ids.size == 0:
+        return {}
+    unique_ids, counts = np.unique(flat_ids, return_counts=True)
+    return {int(gt_id): int(count) for gt_id, count in zip(unique_ids.tolist(), counts.tolist())}
+
+
 def category_frequency(
     pred_cloud: o3d.t.geometry.PointCloud,
     pred_labels: np.ndarray,
@@ -114,6 +122,7 @@ def category_frequency_normalized(
     freqs = {category: 0 for category in get_categories()}
 
     unique_ids = set()
+    gt_id_to_count = _gt_id_count_map(gt_ids)
 
     for gt_id, distance, index in zip(gt_ids, distances, indices):
         # Get predicted label
@@ -121,7 +130,7 @@ def category_frequency_normalized(
         gt_id = gt_id.item()
 
         # Get number of points in segment
-        count = np.sum(gt_ids == gt_id)
+        count = gt_id_to_count.get(int(gt_id), 0)
 
         # Case 1: We check if the object ID (stored as gt_label_id) exists in openlex3d_labels
         # If it doesn't, set the predicted category to 'none'
@@ -184,6 +193,7 @@ def category_frequency_topn(
     freqs = {category: 0 for category in get_categories()}
 
     unique_ids = set()
+    gt_id_to_count = _gt_id_count_map(gt_ids)
 
     for gt_id, distance, index in zip(gt_ids, distances, indices):
         # Get predicted label
@@ -192,7 +202,7 @@ def category_frequency_topn(
         gt_id = gt_id.item()
 
         # Get number of points in segment
-        count = np.sum(gt_ids == gt_id)
+        count = gt_id_to_count.get(int(gt_id), 0)
 
         # Case 1: We check if the object ID (stored as gt_label_id) exists in openlex3d_labels
         # If it doesn't, set the predicted category to 'none'
